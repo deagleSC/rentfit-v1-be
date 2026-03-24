@@ -21,8 +21,8 @@ export const openApiSpec: OpenAPIV3.Document = {
       name: "Auth",
       description: "Email/password; JWT returned as HTTP-only cookie",
     },
-    { name: "Listings", description: "Planned: CRUD and supply-side flows" },
-    { name: "Map", description: "Planned: bbox geospatial queries" },
+    { name: "Listings", description: "Property CRUD (writes: owners/admins)" },
+    { name: "Map", description: "Geospatial queries for the map view" },
     { name: "Chat", description: "Planned: AI streaming" },
   ],
   paths: {
@@ -179,6 +179,192 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/listings": {
+      post: {
+        tags: ["Listings"],
+        summary: "Create listing",
+        operationId: "createListing",
+        description:
+          "Owner or admin. Sets `location` as a GeoJSON Point (`coordinates`: [lng, lat]).",
+        security: [{ sessionCookie: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/CreateListingRequest" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ListingOneSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Not authenticated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Not an owner/admin",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/listings/{id}": {
+      get: {
+        tags: ["Listings"],
+        summary: "Get listing by id",
+        operationId: "getListingById",
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ListingOneSuccess" },
+              },
+            },
+          },
+          "404": {
+            description: "Not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+      put: {
+        tags: ["Listings"],
+        summary: "Update listing",
+        operationId: "updateListing",
+        description:
+          "Owner of the listing or admin. Partial body; only provided fields are updated.",
+        security: [{ sessionCookie: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/UpdateListingRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Updated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ListingOneSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Validation error",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Not authenticated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Cannot edit this listing",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/map/listings": {
+      get: {
+        tags: ["Map"],
+        summary: "Listings in bounding box",
+        operationId: "mapListingsInBbox",
+        description:
+          "Returns up to 200 **active** listings whose point lies inside the bbox. Query: `bbox=minLng,minLat,maxLng,maxLat`.",
+        parameters: [
+          {
+            name: "bbox",
+            in: "query",
+            required: true,
+            schema: { type: "string", example: "77.5,12.9,77.7,13.1" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ListingsMapSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid bbox",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -291,6 +477,154 @@ export const openApiSpec: OpenAPIV3.Document = {
           data: {
             nullable: true,
             description: "Always `null` (no payload).",
+          },
+        },
+      },
+      GeoPoint: {
+        type: "object",
+        required: ["type", "coordinates"],
+        properties: {
+          type: { type: "string", enum: ["Point"] },
+          coordinates: {
+            type: "array",
+            minItems: 2,
+            maxItems: 2,
+            items: { type: "number" },
+            description: "[longitude, latitude]",
+          },
+        },
+      },
+      Address: {
+        type: "object",
+        properties: {
+          text: { type: "string" },
+          locality: { type: "string" },
+          city: { type: "string" },
+        },
+      },
+      AiInsights: {
+        type: "object",
+        properties: {
+          pros: { type: "array", items: { type: "string" } },
+          cons: { type: "array", items: { type: "string" } },
+          trustScore: { type: "number", minimum: 0, maximum: 100 },
+          dealQuality: {
+            type: "string",
+            enum: ["Great", "Fair", "Overpriced"],
+          },
+        },
+      },
+      Listing: {
+        type: "object",
+        required: [
+          "id",
+          "ownerId",
+          "title",
+          "description",
+          "price",
+          "type",
+          "location",
+          "amenities",
+          "images",
+          "status",
+          "createdAt",
+        ],
+        properties: {
+          id: { type: "string" },
+          ownerId: { type: "string" },
+          title: { type: "string" },
+          description: { type: "string" },
+          price: { type: "number" },
+          type: { type: "string" },
+          location: { $ref: "#/components/schemas/GeoPoint" },
+          address: { $ref: "#/components/schemas/Address" },
+          amenities: { type: "array", items: { type: "string" } },
+          images: { type: "array", items: { type: "string" } },
+          aiInsights: { $ref: "#/components/schemas/AiInsights" },
+          status: { type: "string", enum: ["active", "rented", "pending"] },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      CreateListingRequest: {
+        type: "object",
+        required: ["title", "description", "price", "type", "location"],
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          price: { type: "number", minimum: 0, exclusiveMinimum: true },
+          type: { type: "string", example: "2BHK" },
+          location: {
+            type: "object",
+            required: ["coordinates"],
+            properties: {
+              coordinates: {
+                type: "array",
+                minItems: 2,
+                maxItems: 2,
+                items: { type: "number" },
+              },
+            },
+          },
+          address: { $ref: "#/components/schemas/Address" },
+          amenities: { type: "array", items: { type: "string" } },
+          images: { type: "array", items: { type: "string" } },
+        },
+      },
+      UpdateListingRequest: {
+        type: "object",
+        description: "At least one field required",
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          price: { type: "number", minimum: 0, exclusiveMinimum: true },
+          type: { type: "string" },
+          location: {
+            type: "object",
+            required: ["coordinates"],
+            properties: {
+              coordinates: {
+                type: "array",
+                minItems: 2,
+                maxItems: 2,
+                items: { type: "number" },
+              },
+            },
+          },
+          address: { $ref: "#/components/schemas/Address" },
+          amenities: { type: "array", items: { type: "string" } },
+          images: { type: "array", items: { type: "string" } },
+          status: { type: "string", enum: ["active", "rented", "pending"] },
+        },
+      },
+      ListingOneSuccess: {
+        type: "object",
+        required: ["success", "data"],
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            required: ["listing"],
+            properties: {
+              listing: { $ref: "#/components/schemas/Listing" },
+            },
+          },
+        },
+      },
+      ListingsMapSuccess: {
+        type: "object",
+        required: ["success", "data"],
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            required: ["listings", "count"],
+            properties: {
+              listings: {
+                type: "array",
+                items: { $ref: "#/components/schemas/Listing" },
+              },
+              count: { type: "integer", minimum: 0 },
+            },
           },
         },
       },
