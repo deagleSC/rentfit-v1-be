@@ -28,6 +28,22 @@ const sessionSeconds =
     ? jwtExpiresInSec
     : 604800; // 7d
 
+function getOllamaConfig(): {
+  baseURL: string;
+  apiKey: string;
+  model: string;
+} {
+  const baseURL =
+    process.env.OLLAMA_BASE_URL?.trim() || "https://ollama.com/v1";
+  const apiKey = process.env.OLLAMA_API_KEY?.trim() ?? "";
+  const model = process.env.OLLAMA_MODEL?.trim() || "llama3.2";
+  const nodeEnv = process.env.NODE_ENV ?? "development";
+  if (nodeEnv === "production" && !apiKey) {
+    throw new Error("OLLAMA_API_KEY is required in production");
+  }
+  return { baseURL, apiKey, model };
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: Number(process.env.PORT) || 8000,
@@ -36,4 +52,5 @@ export const env = {
   jwtSecret: getJwtSecret(),
   jwtExpiresInSec: sessionSeconds,
   authCookieName: process.env.AUTH_COOKIE_NAME?.trim() || "rentfit_session",
+  ollama: getOllamaConfig(),
 } as const;

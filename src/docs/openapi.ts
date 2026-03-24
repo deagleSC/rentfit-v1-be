@@ -6,7 +6,7 @@ export const openApiSpec: OpenAPIV3.Document = {
     title: "Rentfit API",
     version: "0.1.0",
     description:
-      'Backend for Rentfit AI (Express + MongoDB). JSON responses use `{ "success": true, "data": ... }` on success or `{ "success": false, "error": { "code", "message" } }` on failure (except `/openapi.json`, which returns the raw OpenAPI document).',
+      'Backend for Rentfit AI (Express + MongoDB). JSON responses use `{ "success": true, "data": ... }` on success or `{ "success": false, "error": { "code", "message" } }` on failure (except `/openapi.json`, which returns the raw OpenAPI document). **POST /api/chat** streams the Vercel AI UI message protocol (not the JSON envelope); the client should use `@ai-sdk/react` `useChat` (or compatible) with `credentials: "include"`. Response includes **X-Chat-Id** when a session is created or continued. AI uses **Ollama Cloud** (OpenAI-compatible API at `OLLAMA_BASE_URL`, default `https://ollama.com/v1`).',
   },
   servers: [
     {
@@ -23,7 +23,11 @@ export const openApiSpec: OpenAPIV3.Document = {
     },
     { name: "Listings", description: "Property CRUD (writes: owners/admins)" },
     { name: "Map", description: "Geospatial queries for the map view" },
-    { name: "Chat", description: "Planned: AI streaming" },
+    {
+      name: "Chat",
+      description:
+        "Ollama Cloud–backed streaming chat; `search_listings` uses seeded service areas (Bangalore, Mumbai, Kolkata only)",
+    },
   ],
   paths: {
     "/health": {
@@ -173,6 +177,76 @@ export const openApiSpec: OpenAPIV3.Document = {
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/LogoutSuccess" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/chat": {
+      post: {
+        tags: ["Chat"],
+        summary: "Stream AI chat (search + refine)",
+        operationId: "postChat",
+        description:
+          "Streams the **Vercel AI SDK UI message protocol** (not `{ success, data }`). Use `@ai-sdk/react` `useChat` with the same `messages` shape. Optional session cookie: new chats are tied to the user when logged in. **Requires `OLLAMA_API_KEY` on the server** (Ollama Cloud, OpenAI-compatible base URL). Response header **X-Chat-Id** is the Mongo chat document id—send as `chatId` on the next request to continue the session and search context.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ChatRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description:
+              "UI message stream (tool calls, text deltas). See Vercel AI SDK docs for the wire format.",
+            headers: {
+              "X-Chat-Id": {
+                description:
+                  "Chat session id (Mongo ObjectId); pass back as `chatId` in the body",
+                schema: { type: "string" },
+              },
+            },
+            content: {
+              "text/event-stream": {
+                schema: {
+                  type: "string",
+                  description: "Server-Sent Events stream (AI SDK UI protocol)",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid body (e.g. missing `messages`)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "chatId belongs to another user",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "chatId not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "503": {
+            description: "Ollama not configured (`OLLAMA_API_KEY` missing)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
               },
             },
           },
@@ -478,6 +552,45 @@ export const openApiSpec: OpenAPIV3.Document = {
             nullable: true,
             description: "Always `null` (no payload).",
           },
+        },
+      },
+      ChatRequest: {
+        type: "object",
+        required: ["messages"],
+        properties: {
+          chatId: {
+            type: "string",
+            description:
+              "Existing chat session id from `X-Chat-Id`; omit to create a new chat",
+          },
+          messages: {
+            type: "array",
+            description: "Full or incremental UI messages for the AI SDK",
+            items: { $ref: "#/components/schemas/UIMessage" },
+          },
+        },
+      },
+      UIMessage: {
+        type: "object",
+        required: ["role", "parts"],
+        properties: {
+          id: { type: "string" },
+          role: {
+            type: "string",
+            enum: ["user", "assistant", "system"],
+          },
+          parts: {
+            type: "array",
+            items: { $ref: "#/components/schemas/UIMessageTextPart" },
+          },
+        },
+      },
+      UIMessageTextPart: {
+        type: "object",
+        required: ["type", "text"],
+        properties: {
+          type: { type: "string", enum: ["text"] },
+          text: { type: "string" },
         },
       },
       GeoPoint: {

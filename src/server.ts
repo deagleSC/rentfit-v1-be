@@ -4,9 +4,8 @@ import { connectDb } from "./db/connect";
 import "./models";
 
 async function main() {
-  await connectDb(() => {
-    console.log("Database connected");
-  });
+  await connectDb();
+  console.log("Database connected");
   const app = createApp();
   app.listen(env.port, () => {
     console.log(`Listening on PORT ${env.port}`);

@@ -11,6 +11,7 @@ import { registerSwagger } from "./docs/registerSwagger";
 import { ErrorCodes } from "./http/errorCodes";
 import { fail, ok } from "./http/response";
 import { authRouter } from "./routes/auth";
+import { chatRouter } from "./routes/chat";
 import { listingsRouter, mapRouter } from "./routes/listings";
 
 export function createApp() {
@@ -47,6 +48,7 @@ export function createApp() {
   });
 
   app.use("/api/auth", authRouter);
+  app.use("/api/chat", chatRouter);
   app.use("/api/listings", listingsRouter);
   app.use("/api/map", mapRouter);
 

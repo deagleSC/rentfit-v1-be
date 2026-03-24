@@ -15,3 +15,9 @@ export {
   type IChatMessage,
   type ChatMessageRole,
 } from "./Chat";
+export {
+  ServiceArea,
+  type IServiceArea,
+  type ServiceCitySlug,
+  type ServiceAreaKind,
+} from "./ServiceArea";

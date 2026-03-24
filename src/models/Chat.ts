@@ -9,9 +9,14 @@ export interface IChatMessage {
 }
 
 export interface IChat extends Document {
-  userId: Types.ObjectId;
+  userId?: Types.ObjectId;
   title: string;
   messages: IChatMessage[];
+  /** Last successful search_listings city (for refinement context). */
+  lastCitySlug?: string;
+  /** Opaque filter snapshot from the last tool call (JSON-serializable). */
+  lastFilters?: Record<string, unknown>;
+  lastListingIds?: Types.ObjectId[];
   createdAt: Date;
 }
 
@@ -33,11 +38,14 @@ const chatSchema = new Schema<IChat>(
     userId: {
       type: Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
       index: true,
     },
     title: { type: String, required: true },
     messages: { type: [chatMessageSchema], default: [] },
+    lastCitySlug: { type: String },
+    lastFilters: { type: Schema.Types.Mixed },
+    lastListingIds: [{ type: Schema.Types.ObjectId }],
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );
