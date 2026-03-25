@@ -44,8 +44,14 @@ function getOpenRouterConfig(): {
   model: string;
   headers: Record<string, string> | undefined;
 } {
-  const baseURL =
+  const rawBase =
     process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1";
+  const baseURL = rawBase.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(baseURL)) {
+    throw new Error(
+      `OPENROUTER_BASE_URL must be a full URL (e.g. https://openrouter.ai/api/v1), not a model id. Received: ${baseURL}`,
+    );
+  }
   const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
   const model = process.env.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini";
   const nodeEnv = process.env.NODE_ENV ?? "development";
@@ -53,7 +59,7 @@ function getOpenRouterConfig(): {
     throw new Error("OPENROUTER_API_KEY is required in production");
   }
   return {
-    baseURL: baseURL.replace(/\/+$/, ""),
+    baseURL,
     apiKey,
     model,
     headers: getOpenRouterHeaders(),
