@@ -28,20 +28,36 @@ const sessionSeconds =
     ? jwtExpiresInSec
     : 604800; // 7d
 
-function getOllamaConfig(): {
+function getOpenRouterHeaders(): Record<string, string> | undefined {
+  const referer = process.env.OPENROUTER_HTTP_REFERER?.trim();
+  const title = process.env.OPENROUTER_APP_TITLE?.trim();
+  if (!referer && !title) return undefined;
+  const h: Record<string, string> = {};
+  if (referer) h["HTTP-Referer"] = referer;
+  if (title) h["X-OpenRouter-Title"] = title;
+  return h;
+}
+
+function getOpenRouterConfig(): {
   baseURL: string;
   apiKey: string;
   model: string;
+  headers: Record<string, string> | undefined;
 } {
   const baseURL =
-    process.env.OLLAMA_BASE_URL?.trim() || "https://ollama.com/v1";
-  const apiKey = process.env.OLLAMA_API_KEY?.trim() ?? "";
-  const model = process.env.OLLAMA_MODEL?.trim() || "llama3.2";
+    process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1";
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
+  const model = process.env.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini";
   const nodeEnv = process.env.NODE_ENV ?? "development";
   if (nodeEnv === "production" && !apiKey) {
-    throw new Error("OLLAMA_API_KEY is required in production");
+    throw new Error("OPENROUTER_API_KEY is required in production");
   }
-  return { baseURL, apiKey, model };
+  return {
+    baseURL: baseURL.replace(/\/+$/, ""),
+    apiKey,
+    model,
+    headers: getOpenRouterHeaders(),
+  };
 }
 
 export const env = {
@@ -52,5 +68,5 @@ export const env = {
   jwtSecret: getJwtSecret(),
   jwtExpiresInSec: sessionSeconds,
   authCookieName: process.env.AUTH_COOKIE_NAME?.trim() || "rentfit_session",
-  ollama: getOllamaConfig(),
+  openRouter: getOpenRouterConfig(),
 } as const;

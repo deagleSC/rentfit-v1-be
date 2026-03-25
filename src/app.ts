@@ -12,7 +12,9 @@ import { ErrorCodes } from "./http/errorCodes";
 import { fail, ok } from "./http/response";
 import { authRouter } from "./routes/auth";
 import { chatRouter } from "./routes/chat";
+import { chatsRouter } from "./routes/chats";
 import { listingsRouter, mapRouter } from "./routes/listings";
+import { serviceAreasRouter } from "./routes/serviceAreas";
 
 export function createApp() {
   const app = express();
@@ -49,6 +51,8 @@ export function createApp() {
 
   app.use("/api/auth", authRouter);
   app.use("/api/chat", chatRouter);
+  app.use("/api/chats", chatsRouter);
+  app.use("/api/service-areas", serviceAreasRouter);
   app.use("/api/listings", listingsRouter);
   app.use("/api/map", mapRouter);
 

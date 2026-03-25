@@ -6,7 +6,7 @@ export const openApiSpec: OpenAPIV3.Document = {
     title: "Rentfit API",
     version: "0.1.0",
     description:
-      'Backend for Rentfit AI (Express + MongoDB). JSON responses use `{ "success": true, "data": ... }` on success or `{ "success": false, "error": { "code", "message" } }` on failure (except `/openapi.json`, which returns the raw OpenAPI document). **POST /api/chat** streams the Vercel AI UI message protocol (not the JSON envelope); the client should use `@ai-sdk/react` `useChat` (or compatible) with `credentials: "include"`. Response includes **X-Chat-Id** when a session is created or continued. AI uses **Ollama Cloud** (OpenAI-compatible API at `OLLAMA_BASE_URL`, default `https://ollama.com/v1`).',
+      'Backend for Rentfit AI (Express + MongoDB). JSON responses use `{ "success": true, "data": ... }` on success or `{ "success": false, "error": { "code", "message" } }` on failure (except `/openapi.json`, which returns the raw OpenAPI document). **POST /api/chat** streams the Vercel AI UI message protocol (not the JSON envelope); the client should use `@ai-sdk/react` `useChat` (or compatible) with `credentials: "include"`. Response includes **X-Chat-Id** when a session is created or continued. AI uses **OpenRouter** (OpenAI-compatible API at `OPENROUTER_BASE_URL`, default `https://openrouter.ai/api/v1`).',
   },
   servers: [
     {
@@ -26,7 +26,12 @@ export const openApiSpec: OpenAPIV3.Document = {
     {
       name: "Chat",
       description:
-        "Ollama Cloud–backed streaming chat; `search_listings` uses seeded service areas (Bangalore, Mumbai, Kolkata only)",
+        "OpenRouter-backed streaming chat; `search_listings` uses seeded service areas (Bangalore, Mumbai, Kolkata only). After each stream, UI messages are stored for `GET /api/chats/{id}`.",
+    },
+    {
+      name: "Service areas",
+      description:
+        "Curated city and neighborhood centers (no external geocoding)",
     },
   ],
   paths: {
@@ -183,13 +188,39 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/auth/me": {
+      get: {
+        tags: ["Auth"],
+        summary: "Current user",
+        operationId: "authMe",
+        security: [{ sessionCookie: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AuthUserSuccess" },
+              },
+            },
+          },
+          "401": {
+            description: "Not authenticated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/chat": {
       post: {
         tags: ["Chat"],
         summary: "Stream AI chat (search + refine)",
         operationId: "postChat",
         description:
-          "Streams the **Vercel AI SDK UI message protocol** (not `{ success, data }`). Use `@ai-sdk/react` `useChat` with the same `messages` shape. Optional session cookie: new chats are tied to the user when logged in. **Requires `OLLAMA_API_KEY` on the server** (Ollama Cloud, OpenAI-compatible base URL). Response header **X-Chat-Id** is the Mongo chat document id—send as `chatId` on the next request to continue the session and search context.",
+          "Streams the **Vercel AI SDK UI message protocol** (not `{ success, data }`). Use `@ai-sdk/react` `useChat` with the same `messages` shape. Optional session cookie: new chats are tied to the user when logged in. **Requires `OPENROUTER_API_KEY` on the server** (OpenRouter, OpenAI-compatible base URL). Response header **X-Chat-Id** is the Mongo chat document id—send as `chatId` on the next request. After the stream completes, messages are saved; reload via **`GET /api/chats/{id}`** (`data.chat.messages`).",
         requestBody: {
           required: true,
           content: {
@@ -243,7 +274,8 @@ export const openApiSpec: OpenAPIV3.Document = {
             },
           },
           "503": {
-            description: "Ollama not configured (`OLLAMA_API_KEY` missing)",
+            description:
+              "OpenRouter not configured (`OPENROUTER_API_KEY` missing)",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ErrorEnvelope" },
@@ -439,6 +471,103 @@ export const openApiSpec: OpenAPIV3.Document = {
         },
       },
     },
+    "/api/chats": {
+      get: {
+        tags: ["Chat"],
+        summary: "List my chat sessions",
+        operationId: "listChats",
+        description:
+          "Requires login. Returns up to 50 chats for the current user, newest first.",
+        security: [{ sessionCookie: [] }],
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ChatListSuccess" },
+              },
+            },
+          },
+          "401": {
+            description: "Not authenticated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/chats/{id}": {
+      get: {
+        tags: ["Chat"],
+        summary: "Get chat session (UI messages + search context)",
+        operationId: "getChatById",
+        description:
+          "Anonymous chats (no `userId`) can be read by anyone with the id. User-owned chats require the same session cookie.",
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description:
+              "OK; `data.chat.messages` is the saved UI message array for `useChat` `initialMessages`",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ChatDetailSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid id",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "403": {
+            description: "Chat belongs to another user",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "404": {
+            description: "Not found",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/service-areas": {
+      get: {
+        tags: ["Service areas"],
+        summary: "List cities and neighborhoods",
+        operationId: "listServiceAreas",
+        responses: {
+          "200": {
+            description: "OK",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ServiceAreasSuccess" },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -591,6 +720,106 @@ export const openApiSpec: OpenAPIV3.Document = {
         properties: {
           type: { type: "string", enum: ["text"] },
           text: { type: "string" },
+        },
+      },
+      ChatSummary: {
+        type: "object",
+        required: ["id", "title", "createdAt"],
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          lastCitySlug: { type: "string" },
+        },
+      },
+      ChatListSuccess: {
+        type: "object",
+        required: ["success", "data"],
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            required: ["chats"],
+            properties: {
+              chats: {
+                type: "array",
+                items: { $ref: "#/components/schemas/ChatSummary" },
+              },
+            },
+          },
+        },
+      },
+      ChatDetailPayload: {
+        type: "object",
+        required: ["id", "title", "createdAt", "messages"],
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          userId: { type: "string" },
+          lastCitySlug: { type: "string" },
+          lastFilters: { type: "object", additionalProperties: true },
+          lastListingIds: { type: "array", items: { type: "string" } },
+          messages: {
+            type: "array",
+            description: "Vercel AI UI messages for replay",
+            items: { type: "object", additionalProperties: true },
+          },
+        },
+      },
+      ChatDetailSuccess: {
+        type: "object",
+        required: ["success", "data"],
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            required: ["chat"],
+            properties: {
+              chat: { $ref: "#/components/schemas/ChatDetailPayload" },
+            },
+          },
+        },
+      },
+      ServiceAreaRow: {
+        type: "object",
+        required: [
+          "id",
+          "citySlug",
+          "kind",
+          "name",
+          "aliases",
+          "location",
+          "radiusMeters",
+        ],
+        properties: {
+          id: { type: "string" },
+          citySlug: {
+            type: "string",
+            enum: ["bangalore", "mumbai", "kolkata"],
+          },
+          kind: { type: "string", enum: ["city", "neighborhood"] },
+          name: { type: "string" },
+          aliases: { type: "array", items: { type: "string" } },
+          location: { $ref: "#/components/schemas/GeoPoint" },
+          radiusMeters: { type: "number" },
+        },
+      },
+      ServiceAreasSuccess: {
+        type: "object",
+        required: ["success", "data"],
+        properties: {
+          success: { type: "boolean", enum: [true] },
+          data: {
+            type: "object",
+            required: ["areas"],
+            properties: {
+              areas: {
+                type: "array",
+                items: { $ref: "#/components/schemas/ServiceAreaRow" },
+              },
+            },
+          },
         },
       },
       GeoPoint: {

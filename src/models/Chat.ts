@@ -12,6 +12,8 @@ export interface IChat extends Document {
   userId?: Types.ObjectId;
   title: string;
   messages: IChatMessage[];
+  /** Full UI messages for `useChat` replay (Vercel AI SDK shape). */
+  uiMessages?: unknown[];
   /** Last successful search_listings city (for refinement context). */
   lastCitySlug?: string;
   /** Opaque filter snapshot from the last tool call (JSON-serializable). */
@@ -43,6 +45,7 @@ const chatSchema = new Schema<IChat>(
     },
     title: { type: String, required: true },
     messages: { type: [chatMessageSchema], default: [] },
+    uiMessages: { type: [Schema.Types.Mixed], default: [] },
     lastCitySlug: { type: String },
     lastFilters: { type: Schema.Types.Mixed },
     lastListingIds: [{ type: Schema.Types.ObjectId }],

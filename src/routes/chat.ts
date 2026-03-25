@@ -6,7 +6,7 @@ import {
 } from "ai";
 import { Router } from "express";
 import mongoose from "mongoose";
-import { createChatModel } from "../ai/ollama";
+import { createChatModel } from "../ai/openrouter";
 import { createRentfitTools } from "../ai/rentfitTools";
 import { buildRentfitSystemPrompt } from "../ai/rentfitSystemPrompt";
 import type { IChat } from "../models/Chat";
@@ -58,12 +58,12 @@ chatRouter.post(
   "/",
   optionalAuth,
   asyncHandler(async (req, res) => {
-    if (!env.ollama.apiKey) {
+    if (!env.openRouter.apiKey) {
       fail(
         res,
         503,
         ErrorCodes.INTERNAL_ERROR,
-        "OLLAMA_API_KEY is not configured. Set it to use Ollama Cloud.",
+        "OPENROUTER_API_KEY is not configured. Get a key at https://openrouter.ai/keys",
       );
       return;
     }
@@ -135,6 +135,12 @@ chatRouter.post(
     result.pipeUIMessageStreamToResponse(res, {
       headers: { "X-Chat-Id": chatId! },
       originalMessages: messages,
+      onFinish: async ({ messages: uiMessages, isAborted }) => {
+        if (isAborted || !chatId) return;
+        await Chat.findByIdAndUpdate(chatId, {
+          $set: { uiMessages: uiMessages as unknown[] },
+        });
+      },
     });
   }),
 );

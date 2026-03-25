@@ -6,6 +6,7 @@ import { authCookieOptions, clearAuthCookie } from "../auth/cookie";
 import { env } from "../config/env";
 import { ErrorCodes } from "../http/errorCodes";
 import { fail, ok } from "../http/response";
+import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../util/asyncHandler";
 
 const MIN_PASSWORD_LEN = 8;
@@ -29,6 +30,26 @@ function isMongoDuplicateKey(err: unknown): boolean {
 }
 
 export const authRouter = Router();
+
+authRouter.get(
+  "/me",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = await User.findById(req.auth!.userId).exec();
+    if (!user) {
+      fail(res, 401, ErrorCodes.UNAUTHORIZED, "Unauthorized");
+      return;
+    }
+    ok(res, 200, {
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        createdAt: user.createdAt,
+      },
+    });
+  }),
+);
 
 authRouter.post(
   "/register",
