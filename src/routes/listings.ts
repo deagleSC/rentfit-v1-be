@@ -1,6 +1,8 @@
 import { Router } from "express";
 import mongoose from "mongoose";
 import { Listing, type IAddress, type ListingStatus } from "../models/Listing";
+import type { ServiceCitySlug } from "../models/ServiceArea";
+import { inferCitySlugFromCoordinates } from "../services/inferListingCitySlug";
 import { requireAuth } from "../middleware/auth";
 import { requireOwnerOrAdmin } from "../middleware/roles";
 import { ErrorCodes } from "../http/errorCodes";
@@ -11,6 +13,8 @@ import { asyncHandler } from "../util/asyncHandler";
 const MAP_LISTING_LIMIT = 200;
 
 const STATUSES: ListingStatus[] = ["active", "rented", "pending"];
+
+const CITY_SLUGS: ServiceCitySlug[] = ["bangalore", "mumbai", "kolkata"];
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
@@ -76,6 +80,7 @@ function parseCreateBody(body: unknown):
       type: string;
       lng: number;
       lat: number;
+      citySlug?: ServiceCitySlug;
       address: IAddress;
       amenities: string[];
       images: string[];
@@ -100,6 +105,20 @@ function parseCreateBody(body: unknown):
   if ("error" in amenities) return amenities;
   const images = parseStringArray(b.images, "images");
   if ("error" in images) return images;
+
+  let citySlug: ServiceCitySlug | undefined;
+  if (b.citySlug !== undefined && b.citySlug !== null) {
+    if (
+      typeof b.citySlug !== "string" ||
+      !CITY_SLUGS.includes(b.citySlug as ServiceCitySlug)
+    ) {
+      return {
+        error: `citySlug must be one of: ${CITY_SLUGS.join(", ")}`,
+      };
+    }
+    citySlug = b.citySlug as ServiceCitySlug;
+  }
+
   return {
     title: b.title.trim(),
     description: b.description.trim(),
@@ -107,6 +126,7 @@ function parseCreateBody(body: unknown):
     type: b.type.trim(),
     lng: loc.lng,
     lat: loc.lat,
+    citySlug,
     address: addr,
     amenities,
     images,
@@ -120,6 +140,7 @@ type ListingUpdatePatch = {
   type?: string;
   lng?: number;
   lat?: number;
+  citySlug?: ServiceCitySlug | null;
   address?: IAddress;
   amenities?: string[];
   images?: string[];
@@ -160,6 +181,20 @@ function parseUpdateBody(
     if ("error" in loc) return loc;
     patch.lng = loc.lng;
     patch.lat = loc.lat;
+  }
+  if (b.citySlug !== undefined) {
+    if (b.citySlug === null) {
+      patch.citySlug = null;
+    } else if (
+      typeof b.citySlug === "string" &&
+      CITY_SLUGS.includes(b.citySlug as ServiceCitySlug)
+    ) {
+      patch.citySlug = b.citySlug as ServiceCitySlug;
+    } else {
+      return {
+        error: `citySlug must be one of: ${CITY_SLUGS.join(", ")}, or null`,
+      };
+    }
   }
   if (b.address !== undefined) {
     const addr = parseAddress(b.address);
@@ -240,8 +275,12 @@ listingsRouter.post(
       return;
     }
     const userId = req.auth!.userId;
+    const citySlug =
+      parsed.citySlug ??
+      (await inferCitySlugFromCoordinates(parsed.lng, parsed.lat));
     const doc = await Listing.create({
       ownerId: userId,
+      ...(citySlug ? { citySlug } : {}),
       title: parsed.title,
       description: parsed.description,
       price: parsed.price,
@@ -312,6 +351,16 @@ listingsRouter.put(
         type: "Point",
         coordinates: [parsed.lng, parsed.lat],
       };
+      if (parsed.citySlug === undefined) {
+        const inferred = await inferCitySlugFromCoordinates(
+          parsed.lng,
+          parsed.lat,
+        );
+        doc.citySlug = inferred;
+      }
+    }
+    if (parsed.citySlug !== undefined) {
+      doc.citySlug = parsed.citySlug ?? undefined;
     }
     if (parsed.address !== undefined) doc.address = parsed.address;
     if (parsed.amenities !== undefined) doc.amenities = parsed.amenities;

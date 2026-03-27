@@ -12,13 +12,18 @@ export function createRentfitTools() {
   return {
     search_listings: tool({
       description:
-        "Search active rental listings in MongoDB. Only citySlug values bangalore, mumbai, kolkata are supported. Use areaName for a neighborhood (e.g. Indiranagar, Bandra).",
+        "Search active rental listings in MongoDB. Only citySlug values bangalore, mumbai, kolkata are supported. areaName is optional fuzzy text matched against addresses and listing title/description—if results are empty, retry with only citySlug (and price if the user gave a budget) before concluding nothing exists. Amenities use AND logic; omit amenities if the first call returns [].",
       inputSchema: z.object({
         citySlug: z.enum(["bangalore", "mumbai", "kolkata"]),
         areaName: z.string().optional(),
         priceMin: z.number().optional(),
         priceMax: z.number().optional(),
-        type: z.string().optional(),
+        type: z
+          .string()
+          .optional()
+          .describe(
+            "Listing layout in DB: 1BHK, 2BHK, 3BHK, Studio, PG, etc. Omit for generic asks (flats, apartments). Words like flat/apartment/rental are ignored as filters.",
+          ),
         amenities: z.array(z.string()).optional(),
         limit: z.number().int().min(1).max(25).optional(),
       }),

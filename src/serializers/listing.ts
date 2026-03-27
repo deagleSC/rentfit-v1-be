@@ -3,6 +3,7 @@ import type { IListing } from "../models/Listing";
 export type SerializedListing = {
   id: string;
   ownerId: string;
+  citySlug?: string;
   title: string;
   description: string;
   price: number;
@@ -25,6 +26,7 @@ export function serializeListing(doc: IListing): SerializedListing {
   return {
     id: doc.id,
     ownerId: doc.ownerId.toString(),
+    ...(doc.citySlug ? { citySlug: doc.citySlug } : {}),
     title: doc.title,
     description: doc.description,
     price: doc.price,

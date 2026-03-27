@@ -213,6 +213,45 @@ export const openApiSpec: OpenAPIV3.Document = {
           },
         },
       },
+      patch: {
+        tags: ["Auth"],
+        summary: "Update current user profile",
+        operationId: "authMePatch",
+        security: [{ sessionCookie: [] }],
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ProfilePatchBody" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Updated user",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AuthUserSuccess" },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid body (e.g. unknown defaultCity)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+          "401": {
+            description: "Not authenticated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorEnvelope" },
+              },
+            },
+          },
+        },
+      },
     },
     "/api/chat": {
       post: {
@@ -472,6 +511,41 @@ export const openApiSpec: OpenAPIV3.Document = {
       },
     },
     "/api/chats": {
+      post: {
+        tags: ["Chat"],
+        summary: "Create empty chat session",
+        operationId: "createChat",
+        description:
+          "Creates a chat document immediately (JSON). Send the first user turn with `POST /api/chat` and `chatId` so streaming happens on `/search/[id]`. Optional session cookie ties the chat to the user.",
+        responses: {
+          "201": {
+            description:
+              "Created; `data.chat.id` is the Mongo id for `chatId` and the URL",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", enum: [true] },
+                    data: {
+                      type: "object",
+                      properties: {
+                        chat: {
+                          type: "object",
+                          properties: { id: { type: "string" } },
+                          required: ["id"],
+                        },
+                      },
+                      required: ["chat"],
+                    },
+                  },
+                  required: ["success", "data"],
+                },
+              },
+            },
+          },
+        },
+      },
       get: {
         tags: ["Chat"],
         summary: "List my chat sessions",
@@ -648,14 +722,37 @@ export const openApiSpec: OpenAPIV3.Document = {
           password: { type: "string", format: "password" },
         },
       },
+      UserPreferences: {
+        type: "object",
+        properties: {
+          defaultCity: {
+            type: "string",
+            enum: ["bangalore", "mumbai", "kolkata"],
+            description: "Preferred city for search (optional)",
+          },
+        },
+      },
+      ProfilePatchBody: {
+        type: "object",
+        description:
+          "Optional fields. Send defaultCity as a supported slug, empty string, or omit to leave unchanged.",
+        properties: {
+          defaultCity: {
+            type: "string",
+            enum: ["", "bangalore", "mumbai", "kolkata"],
+            description: "Preferred city slug, or empty string to clear",
+          },
+        },
+      },
       PublicUser: {
         type: "object",
-        required: ["id", "email", "role", "createdAt"],
+        required: ["id", "email", "role", "createdAt", "preferences"],
         properties: {
           id: { type: "string" },
           email: { type: "string", format: "email" },
           role: { type: "string", enum: ["renter", "owner", "admin"] },
           createdAt: { type: "string", format: "date-time" },
+          preferences: { $ref: "#/components/schemas/UserPreferences" },
         },
       },
       AuthUserSuccess: {
@@ -874,6 +971,12 @@ export const openApiSpec: OpenAPIV3.Document = {
         properties: {
           id: { type: "string" },
           ownerId: { type: "string" },
+          citySlug: {
+            type: "string",
+            enum: ["bangalore", "mumbai", "kolkata"],
+            description:
+              "Service city for search/chat; set explicitly or inferred from listing coordinates.",
+          },
           title: { type: "string" },
           description: { type: "string" },
           price: { type: "number" },
@@ -910,6 +1013,12 @@ export const openApiSpec: OpenAPIV3.Document = {
           address: { $ref: "#/components/schemas/Address" },
           amenities: { type: "array", items: { type: "string" } },
           images: { type: "array", items: { type: "string" } },
+          citySlug: {
+            type: "string",
+            enum: ["bangalore", "mumbai", "kolkata"],
+            description:
+              "Optional; if omitted, inferred from `location` using seeded service-area disks.",
+          },
         },
       },
       UpdateListingRequest: {
@@ -936,6 +1045,13 @@ export const openApiSpec: OpenAPIV3.Document = {
           amenities: { type: "array", items: { type: "string" } },
           images: { type: "array", items: { type: "string" } },
           status: { type: "string", enum: ["active", "rented", "pending"] },
+          citySlug: {
+            type: "string",
+            nullable: true,
+            enum: ["bangalore", "mumbai", "kolkata"],
+            description:
+              "Set service city, or JSON `null` to clear. If `location` is updated without `citySlug`, the server re-infers from coordinates.",
+          },
         },
       },
       ListingOneSuccess: {

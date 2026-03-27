@@ -37,7 +37,8 @@ async function main() {
         type: "Point" as const,
         coordinates: [88.3639, 22.5726] as [number, number],
       },
-      radiusMeters: 35_000,
+      /** Metro sprawl (New Town, Salt Lake, periphery) needs a wider disk than 35km. */
+      radiusMeters: 60_000,
     },
     {
       citySlug: "bangalore" as const,

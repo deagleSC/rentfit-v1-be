@@ -9,6 +9,24 @@ import { asyncHandler } from "../util/asyncHandler";
 
 export const chatsRouter = Router();
 
+/** Empty session for map+chat UI; first message streams via `POST /api/chat` with `chatId`. */
+chatsRouter.post(
+  "/",
+  optionalAuth,
+  asyncHandler(async (req, res) => {
+    const chatDoc = await Chat.create({
+      userId: req.auth?.userId
+        ? new mongoose.Types.ObjectId(req.auth.userId)
+        : undefined,
+      title: "New chat",
+      messages: [],
+    });
+    ok(res, 201, {
+      chat: { id: chatDoc.id },
+    });
+  }),
+);
+
 chatsRouter.get(
   "/",
   requireAuth,

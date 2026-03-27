@@ -1,4 +1,5 @@
 import mongoose, { type Document, Schema, type Types } from "mongoose";
+import type { ServiceCitySlug } from "./ServiceArea";
 
 export type ListingType = "1BHK" | "2BHK" | "3BHK" | "PG" | "Studio" | string;
 export type ListingStatus = "active" | "rented" | "pending";
@@ -24,6 +25,7 @@ export interface IAiInsights {
 
 export interface IListing extends Document {
   ownerId: Types.ObjectId;
+  citySlug?: ServiceCitySlug;
   title: string;
   description: string;
   price: number;
@@ -65,6 +67,11 @@ const listingSchema = new Schema<IListing>(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
+    },
+    citySlug: {
+      type: String,
+      enum: ["bangalore", "mumbai", "kolkata"],
       index: true,
     },
     title: { type: String, required: true },
@@ -110,5 +117,6 @@ const listingSchema = new Schema<IListing>(
 
 listingSchema.index({ location: "2dsphere" });
 listingSchema.index({ price: 1, type: 1, status: 1 });
+listingSchema.index({ citySlug: 1, status: 1 });
 
 export const Listing = mongoose.model<IListing>("Listing", listingSchema);

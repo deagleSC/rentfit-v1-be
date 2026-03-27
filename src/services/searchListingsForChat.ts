@@ -47,6 +47,117 @@ function normalize(s: string): string {
   return s.trim().toLowerCase();
 }
 
+/** User/model often passes generic words; DB types are 1BHK, 2BHK, 3BHK, Studio, PG, etc. */
+const GENERIC_PROPERTY_TYPE_TERMS = new Set([
+  "flat",
+  "flats",
+  "apartment",
+  "apartments",
+  "apt",
+  "rental",
+  "rentals",
+  "house",
+  "houses",
+  "home",
+  "homes",
+  "property",
+  "properties",
+  "unit",
+  "units",
+  "listing",
+  "listings",
+  "place",
+  "places",
+  "accommodation",
+]);
+
+function isGenericPropertyTypeTerm(type: string | undefined): boolean {
+  if (!type?.trim()) return false;
+  return GENERIC_PROPERTY_TYPE_TERMS.has(normalize(type));
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function addCommonListingFilters(
+  base: FilterQuery<IListing>,
+  args: SearchListingsArgs,
+): FilterQuery<IListing> {
+  const m: FilterQuery<IListing> = { ...base };
+  if (args.priceMin != null || args.priceMax != null) {
+    m.price = {};
+    if (args.priceMin != null) m.price.$gte = args.priceMin;
+    if (args.priceMax != null) m.price.$lte = args.priceMax;
+  }
+  if (args.type?.trim() && !isGenericPropertyTypeTerm(args.type)) {
+    m.type = new RegExp(`^${escapeRegex(args.type.trim())}$`, "i");
+  }
+  if (args.amenities?.length) {
+    m.amenities = { $all: args.amenities };
+  }
+  return m;
+}
+
+function stripBranchAmenities(b: FilterQuery<IListing>): FilterQuery<IListing> {
+  if (!("amenities" in b)) return b;
+  const { amenities: _drop, ...rest } = b;
+  return rest;
+}
+
+function stripBranchType(b: FilterQuery<IListing>): FilterQuery<IListing> {
+  if (!("type" in b)) return b;
+  const { type: _drop, ...rest } = b;
+  return rest;
+}
+
+function stripOrTreeAmenities(m: FilterQuery<IListing>): FilterQuery<IListing> {
+  if ("$or" in m && Array.isArray(m.$or)) {
+    return {
+      $or: m.$or.map((branch) =>
+        stripBranchAmenities(branch as FilterQuery<IListing>),
+      ),
+    };
+  }
+  return stripBranchAmenities(m);
+}
+
+function stripOrTreeType(m: FilterQuery<IListing>): FilterQuery<IListing> {
+  if ("$or" in m && Array.isArray(m.$or)) {
+    return {
+      $or: m.$or.map((branch) =>
+        stripBranchType(branch as FilterQuery<IListing>),
+      ),
+    };
+  }
+  return stripBranchType(m);
+}
+
+function queryHasAmenityFilter(m: FilterQuery<IListing>): boolean {
+  if ("amenities" in m) return true;
+  if ("$or" in m && Array.isArray(m.$or)) {
+    return m.$or.some(
+      (b) => typeof b === "object" && b !== null && "amenities" in b,
+    );
+  }
+  return false;
+}
+
+function queryHasTypeFilter(m: FilterQuery<IListing>): boolean {
+  if ("type" in m) return true;
+  if ("$or" in m && Array.isArray(m.$or)) {
+    return m.$or.some(
+      (b) => typeof b === "object" && b !== null && "type" in b,
+    );
+  }
+  return false;
+}
+
+function cityTextFallbackTokens(citySlug: ServiceCitySlug): string[] {
+  if (citySlug === "kolkata") return ["Kolkota", "West Bengal"];
+  return [];
+}
+
 async function resolveArea(
   citySlug: ServiceCitySlug,
   areaName: string | undefined,
@@ -56,6 +167,8 @@ async function resolveArea(
   radiusM: number;
   areaLabel: string;
   localityRegex?: RegExp;
+  /** City-wide queries can union `citySlug` on listings with geo (see search). */
+  scope: "city" | "neighborhood" | "fuzzy_text";
 }> {
   const city = await ServiceArea.findOne({ citySlug, kind: "city" }).exec();
   if (!city) {
@@ -69,10 +182,24 @@ async function resolveArea(
       lat,
       radiusM: city.radiusMeters,
       areaLabel: city.name,
+      scope: "city",
     };
   }
 
   const n = normalize(areaName);
+  const cityNameNorm = normalize(city.name);
+  const matchesCityWideName =
+    n === cityNameNorm || city.aliases.some((a) => normalize(a) === n);
+  if (matchesCityWideName) {
+    return {
+      lng,
+      lat,
+      radiusM: city.radiusMeters,
+      areaLabel: city.name,
+      scope: "city",
+    };
+  }
+
   const hoods = await ServiceArea.find({
     citySlug,
     kind: "neighborhood",
@@ -93,6 +220,7 @@ async function resolveArea(
       lat: hlat,
       radiusM: match.radiusMeters,
       areaLabel: match.name,
+      scope: "neighborhood",
     };
   }
 
@@ -105,6 +233,7 @@ async function resolveArea(
       areaName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
       "i",
     ),
+    scope: "fuzzy_text",
   };
 }
 
@@ -116,41 +245,219 @@ export async function searchListingsForChat(
   const geo = await resolveArea(args.citySlug, args.areaName);
   const radiusRad = toRadians(geo.radiusM);
 
-  const match: FilterQuery<IListing> = {
-    status: "active",
-    location: {
-      $geoWithin: {
-        $centerSphere: [[geo.lng, geo.lat], radiusRad],
-      },
-    },
+  const sort = { createdAt: -1 as const };
+  const findLimited = (q: FilterQuery<IListing>) =>
+    Listing.find(q).sort(sort).limit(limit).exec();
+
+  const notes: string[] = [];
+  let currentMatch: FilterQuery<IListing>;
+  let docs: IListing[];
+
+  const stripLocalityOr = (m: FilterQuery<IListing>): FilterQuery<IListing> => {
+    if (!("$or" in m)) return m;
+    const { $or: _drop, ...rest } = m;
+    return rest;
   };
 
-  if (args.priceMin != null || args.priceMax != null) {
-    match.price = {};
-    if (args.priceMin != null) match.price.$gte = args.priceMin;
-    if (args.priceMax != null) match.price.$lte = args.priceMax;
+  const stripAmenities = (m: FilterQuery<IListing>): FilterQuery<IListing> => {
+    if (!("amenities" in m)) return m;
+    const { amenities: _drop, ...rest } = m;
+    return rest;
+  };
+
+  const stripType = (m: FilterQuery<IListing>): FilterQuery<IListing> => {
+    if (!("type" in m)) return m;
+    const { type: _drop, ...rest } = m;
+    return rest;
+  };
+
+  if (geo.scope === "city") {
+    const slugPart = addCommonListingFilters(
+      { status: "active", citySlug: args.citySlug },
+      args,
+    );
+    const geoPart = addCommonListingFilters(
+      {
+        status: "active",
+        location: {
+          $geoWithin: {
+            $centerSphere: [[geo.lng, geo.lat], radiusRad],
+          },
+        },
+      },
+      args,
+    );
+    currentMatch = { $or: [slugPart, geoPart] };
+    docs = await findLimited(currentMatch);
+
+    if (
+      docs.length === 0 &&
+      args.amenities?.length &&
+      queryHasAmenityFilter(currentMatch)
+    ) {
+      currentMatch = stripOrTreeAmenities(currentMatch);
+      docs = await findLimited(currentMatch);
+      if (docs.length > 0) {
+        notes.push(
+          "No listings matched all requested amenities; results shown without the amenity filter.",
+        );
+      }
+    }
+
+    if (
+      docs.length === 0 &&
+      args.type?.trim() &&
+      !isGenericPropertyTypeTerm(args.type) &&
+      queryHasTypeFilter(currentMatch)
+    ) {
+      currentMatch = stripOrTreeType(currentMatch);
+      docs = await findLimited(currentMatch);
+      if (docs.length > 0) {
+        notes.push(
+          "No listings matched the exact property type; results shown without the type filter.",
+        );
+      }
+    }
+  } else {
+    const match: FilterQuery<IListing> = {
+      status: "active",
+      location: {
+        $geoWithin: {
+          $centerSphere: [[geo.lng, geo.lat], radiusRad],
+        },
+      },
+    };
+
+    if (args.priceMin != null || args.priceMax != null) {
+      match.price = {};
+      if (args.priceMin != null) match.price.$gte = args.priceMin;
+      if (args.priceMax != null) match.price.$lte = args.priceMax;
+    }
+
+    if (args.type?.trim() && !isGenericPropertyTypeTerm(args.type)) {
+      match.type = new RegExp(`^${escapeRegex(args.type.trim())}$`, "i");
+    }
+
+    if (args.amenities?.length) {
+      match.amenities = { $all: args.amenities };
+    }
+
+    if (geo.localityRegex) {
+      match.$or = [
+        { "address.locality": geo.localityRegex },
+        { "address.text": geo.localityRegex },
+        { "address.city": geo.localityRegex },
+        { title: geo.localityRegex },
+        { description: geo.localityRegex },
+      ];
+    }
+
+    currentMatch = match;
+    docs = await findLimited(currentMatch);
+
+    if (docs.length === 0 && geo.localityRegex && "$or" in currentMatch) {
+      currentMatch = stripLocalityOr(currentMatch);
+      docs = await findLimited(currentMatch);
+      if (docs.length > 0) {
+        notes.push(
+          `The area phrase "${args.areaName}" did not match saved address or title text closely enough; showing active listings in the ${geo.areaLabel} map region instead (same geo search, no text filter).`,
+        );
+      }
+    }
+
+    if (
+      docs.length === 0 &&
+      args.amenities?.length &&
+      "amenities" in currentMatch
+    ) {
+      currentMatch = stripAmenities(currentMatch);
+      docs = await findLimited(currentMatch);
+      if (docs.length > 0) {
+        notes.push(
+          "No listings matched all requested amenities; results shown without the amenity filter.",
+        );
+      }
+    }
+
+    if (
+      docs.length === 0 &&
+      args.type?.trim() &&
+      !isGenericPropertyTypeTerm(args.type) &&
+      "type" in currentMatch
+    ) {
+      currentMatch = stripType(currentMatch);
+      docs = await findLimited(currentMatch);
+      if (docs.length > 0) {
+        notes.push(
+          "No listings matched the exact property type; results shown without the type filter.",
+        );
+      }
+    }
   }
 
-  if (args.type?.trim()) {
-    match.type = new RegExp(`^${escapeRegex(args.type.trim())}$`, "i");
-  }
+  /**
+   * Listings may carry the city in text or `citySlug` while coordinates sit outside the disk.
+   */
+  if (docs.length === 0) {
+    const cityRow = await ServiceArea.findOne({
+      citySlug: args.citySlug,
+      kind: "city",
+    }).exec();
+    if (cityRow) {
+      const textTokens = [
+        cityRow.name,
+        ...cityRow.aliases,
+        ...cityTextFallbackTokens(args.citySlug),
+      ];
+      const pattern = new RegExp(textTokens.map(escapeRegex).join("|"), "i");
+      const slugOrText: FilterQuery<IListing>[] = [
+        { citySlug: args.citySlug },
+        { "address.city": pattern },
+        { "address.locality": pattern },
+        { "address.text": pattern },
+        { title: pattern },
+        { description: pattern },
+      ];
+      let fb: FilterQuery<IListing> = {
+        status: "active",
+        $or: slugOrText,
+      };
+      if (args.priceMin != null || args.priceMax != null) {
+        fb.price = {};
+        if (args.priceMin != null) fb.price.$gte = args.priceMin;
+        if (args.priceMax != null) fb.price.$lte = args.priceMax;
+      }
+      if (args.type?.trim() && !isGenericPropertyTypeTerm(args.type)) {
+        fb.type = new RegExp(`^${escapeRegex(args.type.trim())}$`, "i");
+      }
+      if (args.amenities?.length) {
+        fb.amenities = { $all: args.amenities };
+      }
 
-  if (args.amenities?.length) {
-    match.amenities = { $all: args.amenities };
-  }
+      let fbDocs = await findLimited(fb);
+      if (fbDocs.length === 0 && args.amenities?.length && "amenities" in fb) {
+        fb = stripAmenities(fb);
+        fbDocs = await findLimited(fb);
+      }
+      if (
+        fbDocs.length === 0 &&
+        args.type?.trim() &&
+        !isGenericPropertyTypeTerm(args.type) &&
+        "type" in fb
+      ) {
+        fb = stripType(fb);
+        fbDocs = await findLimited(fb);
+      }
 
-  if (geo.localityRegex) {
-    match.$or = [
-      { "address.locality": geo.localityRegex },
-      { "address.text": geo.localityRegex },
-      { "address.city": geo.localityRegex },
-    ];
+      if (fbDocs.length > 0) {
+        docs = fbDocs;
+        currentMatch = fb;
+        notes.push(
+          `No matches from the primary geo/slug query; found ${fbDocs.length} active listing(s) by saved city tag or city/name text—verify map pins.`,
+        );
+      }
+    }
   }
-
-  const docs = await Listing.find(match)
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .exec();
 
   const listings = docs.map((d) => {
     const [dlng, dlat] = d.location.coordinates;
@@ -166,25 +473,37 @@ export async function searchListingsForChat(
     };
   });
 
+  const appliedAmenities =
+    args.amenities?.length && queryHasAmenityFilter(currentMatch)
+      ? args.amenities
+      : undefined;
+  const appliedType =
+    args.type?.trim() && queryHasTypeFilter(currentMatch)
+      ? args.type
+      : undefined;
+
   const applied = {
     citySlug: args.citySlug,
     areaLabel: geo.areaLabel,
     priceMin: args.priceMin,
     priceMax: args.priceMax,
-    type: args.type,
-    amenities: args.amenities,
+    type: appliedType,
+    amenities: appliedAmenities,
   };
 
-  const note =
-    geo.localityRegex && docs.length === 0
-      ? `No exact neighborhood match in DB for "${args.areaName}"; broadened to ${geo.areaLabel} with a text filter — try another area or widen price/type.`
-      : geo.localityRegex && docs.length > 0
-        ? `Matched locality "${args.areaName}" via text search within ${geo.areaLabel}.`
-        : undefined;
+  if (geo.localityRegex && docs.length > 0 && "$or" in currentMatch) {
+    notes.push(
+      `Matched "${args.areaName}" via text search within ${geo.areaLabel}.`,
+    );
+  }
+
+  if (docs.length === 0) {
+    notes.push(
+      "No active listings matched these filters in this region. Widen price, omit amenities or area text, or try search_listings again with only citySlug.",
+    );
+  }
+
+  const note = notes.length ? notes.join(" ") : undefined;
 
   return { listings, applied, note };
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -10,6 +10,8 @@
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "seed:service-areas": "tsx src/scripts/seedServiceAreas.ts",
+    "backfill:listing-city-slugs": "tsx src/scripts/backfillListingCitySlugs.ts",
+    "seed:sample-listings": "tsx src/scripts/seedSampleListings.ts",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "engines": {

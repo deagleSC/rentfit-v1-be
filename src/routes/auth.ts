@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { User, type UserRole } from "../models/User";
+import { User, type IUser, type UserRole } from "../models/User";
+import type { ServiceCitySlug } from "../models/ServiceArea";
 import { hashPassword, verifyPassword } from "../auth/password";
 import { signAuthToken } from "../auth/jwt";
 import { authCookieOptions, clearAuthCookie } from "../auth/cookie";
@@ -29,6 +30,47 @@ function isMongoDuplicateKey(err: unknown): boolean {
   );
 }
 
+const SERVICE_CITY_SLUGS: ServiceCitySlug[] = [
+  "bangalore",
+  "mumbai",
+  "kolkata",
+];
+
+function toPublicUser(user: IUser) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    createdAt: user.createdAt,
+    preferences: {
+      defaultCity: user.preferences?.defaultCity,
+    },
+  };
+}
+
+function parseDefaultCityPatch(
+  body: unknown,
+): ServiceCitySlug | null | undefined {
+  if (!body || typeof body !== "object" || !("defaultCity" in body)) {
+    return undefined;
+  }
+  const raw = (body as { defaultCity: unknown }).defaultCity;
+  if (raw === null) {
+    return null;
+  }
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const slug = raw.trim().toLowerCase();
+  if (slug === "") {
+    return null;
+  }
+  if (!SERVICE_CITY_SLUGS.includes(slug as ServiceCitySlug)) {
+    return undefined;
+  }
+  return slug as ServiceCitySlug;
+}
+
 export const authRouter = Router();
 
 authRouter.get(
@@ -40,14 +82,59 @@ authRouter.get(
       fail(res, 401, ErrorCodes.UNAUTHORIZED, "Unauthorized");
       return;
     }
-    ok(res, 200, {
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        createdAt: user.createdAt,
-      },
-    });
+    ok(res, 200, { user: toPublicUser(user) });
+  }),
+);
+
+authRouter.patch(
+  "/me",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = await User.findById(req.auth!.userId).exec();
+    if (!user) {
+      fail(res, 401, ErrorCodes.UNAUTHORIZED, "Unauthorized");
+      return;
+    }
+
+    const nextCity = parseDefaultCityPatch(req.body);
+    if (nextCity === undefined && req.body && typeof req.body === "object") {
+      const hasKey = "defaultCity" in req.body;
+      if (
+        hasKey &&
+        (req.body as { defaultCity: unknown }).defaultCity !== undefined &&
+        (req.body as { defaultCity: unknown }).defaultCity !== null &&
+        (req.body as { defaultCity: unknown }).defaultCity !== ""
+      ) {
+        fail(
+          res,
+          400,
+          ErrorCodes.VALIDATION_ERROR,
+          `defaultCity must be one of: ${SERVICE_CITY_SLUGS.join(", ")}`,
+        );
+        return;
+      }
+    }
+
+    if (nextCity !== undefined) {
+      if (nextCity === null) {
+        await User.updateOne(
+          { _id: user._id },
+          { $unset: { "preferences.defaultCity": 1 } },
+        ).exec();
+      } else {
+        await User.updateOne(
+          { _id: user._id },
+          { $set: { "preferences.defaultCity": nextCity } },
+        ).exec();
+      }
+    }
+
+    const fresh = await User.findById(req.auth!.userId).exec();
+    if (!fresh) {
+      fail(res, 401, ErrorCodes.UNAUTHORIZED, "Unauthorized");
+      return;
+    }
+    ok(res, 200, { user: toPublicUser(fresh) });
   }),
 );
 
@@ -90,12 +177,7 @@ authRouter.post(
       });
       res.cookie(env.authCookieName, token, authCookieOptions());
       ok(res, 201, {
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          createdAt: user.createdAt,
-        },
+        user: toPublicUser(user),
       });
     } catch (err: unknown) {
       if (isMongoDuplicateKey(err)) {
@@ -140,12 +222,7 @@ authRouter.post(
     });
     res.cookie(env.authCookieName, token, authCookieOptions());
     ok(res, 200, {
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        createdAt: user.createdAt,
-      },
+      user: toPublicUser(user),
     });
   }),
 );
