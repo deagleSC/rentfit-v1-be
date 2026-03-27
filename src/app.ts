@@ -31,11 +31,6 @@ export function createApp() {
           connectSrc: ["'self'"],
         },
       },
-      /**
-       * Default `same-origin` blocks cross-host credentialed fetches (SPA on app.example.com
-       * calling API on api.example.com), so Set-Cookie never sticks and no Cookie header is sent.
-       * CORS still restricts which Origins may read responses.
-       */
       crossOriginResourcePolicy: { policy: "cross-origin" },
     }),
   );
